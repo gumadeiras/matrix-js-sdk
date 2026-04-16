@@ -235,12 +235,43 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
      * Emit that a backup decryption key is cached and ready for listeners to use.
      *
      * Callers should only invoke this after the relevant server-side backup is
-     * observable through {@link getServerBackupInfo}.
+     * observable through {@link getServerBackupInfo} and locally enabled when
+     * applicable.
      *
      * @param version - The backup version whose decryption key is cached.
      */
     public emitBackupDecryptionKeyCached(version: string): void {
         this.emit(CryptoEvent.KeyBackupDecryptionKeyCached, version);
+    }
+
+    /**
+     * Mark a newly-created backup as the current usable backup.
+     *
+     * The server has already accepted this backup, so this uses the creation
+     * response to update local backup state instead of racing a follow-up GET
+     * against eventual consistency.
+     *
+     * @param backupInfo - The newly-created backup details.
+     */
+    public async enableKeyBackupFromCreation(backupInfo: KeyBackupCreationInfo): Promise<void> {
+        const keyBackupInfo: KeyBackupInfo = {
+            algorithm: backupInfo.algorithm,
+            auth_data: backupInfo.authData,
+            version: backupInfo.version,
+        };
+
+        this.serverBackupInfo = keyBackupInfo;
+        this.checkedForBackup = true;
+
+        const activeVersion = await this.getActiveBackupVersion();
+        if (activeVersion === null) {
+            await this.enableKeyBackup(keyBackupInfo);
+        } else if (activeVersion !== backupInfo.version) {
+            await this.disableKeyBackup();
+            await this.enableKeyBackup(keyBackupInfo);
+        }
+
+        this.emitBackupDecryptionKeyCached(backupInfo.version);
     }
 
     private async saveBackupDecryptionKeyForCurrentBackup(

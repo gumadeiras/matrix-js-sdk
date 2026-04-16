@@ -811,7 +811,7 @@ describe("RustCrypto", () => {
             expect(storeSpy).toHaveBeenCalledWith("m.megolm_backup.v1", expect.anything());
         });
 
-        it("resetKeyBackup emits key cached after the new backup is observable", async () => {
+        it("resetKeyBackup emits key cached with coherent backup state after a stale no-backup check", async () => {
             const rustCrypto = await makeTestRustCrypto(
                 fetchMock as unknown as MatrixHttpApi<any>,
                 testData.TEST_USER_ID,
@@ -819,11 +819,33 @@ describe("RustCrypto", () => {
                 secretStorage,
             );
 
-            const keyBackupIsCached = emitPromise(rustCrypto, CryptoEvent.KeyBackupDecryptionKeyCached);
+            await expect(rustCrypto.getKeyBackupInfo()).resolves.toBeNull();
+
+            const keyBackupIsCached = new Promise<{
+                activeBackupVersion: string | null;
+                eventVersion: string;
+                serverBackupVersion: string | undefined;
+            }>((resolve) => {
+                rustCrypto.on(CryptoEvent.KeyBackupDecryptionKeyCached, async (eventVersion) => {
+                    const [activeBackupVersion, serverBackupInfo] = await Promise.all([
+                        rustCrypto.getActiveSessionBackupVersion(),
+                        rustCrypto.getKeyBackupInfo(),
+                    ]);
+                    resolve({
+                        activeBackupVersion,
+                        eventVersion,
+                        serverBackupVersion: serverBackupInfo?.version,
+                    });
+                });
+            });
 
             await rustCrypto.resetKeyBackup();
 
-            await expect(keyBackupIsCached).resolves.toEqual("1");
+            await expect(keyBackupIsCached).resolves.toEqual({
+                activeBackupVersion: "1",
+                eventVersion: "1",
+                serverBackupVersion: "1",
+            });
         });
 
         it("bootstrapSecretStorage doesn't try to save megolm backup key not in cache", async () => {
@@ -833,6 +855,7 @@ describe("RustCrypto", () => {
                     asJSON: vi.fn().mockReturnValue("{}"),
                 }),
                 saveBackupDecryptionKey: vi.fn(),
+                enableBackupV1: vi.fn(),
                 exportCrossSigningKeys: vi.fn().mockResolvedValue({
                     masterKey: "sosecret",
                     userSigningKey: "secrets",
