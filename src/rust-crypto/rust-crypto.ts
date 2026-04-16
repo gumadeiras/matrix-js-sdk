@@ -1382,8 +1382,18 @@ export class RustCrypto extends TypedEventEmitter<RustCryptoEvents, CryptoEventH
             await this.secretStorage.store("m.megolm_backup.v1", backupInfo.decryptionKey.toBase64());
         }
 
-        // we can check and start async
-        this.checkKeyBackupAndEnable();
+        // We can check and start asynchronously. Wait until the server-side backup
+        // is observable before notifying listeners that the new key can be used.
+        void this.checkKeyBackupAndEnable()
+            .then(async () => {
+                const serverBackupInfo = await this.backupManager.getServerBackupInfo();
+                if (serverBackupInfo?.version === backupInfo.version) {
+                    this.backupManager.emitBackupDecryptionKeyCached(backupInfo.version);
+                }
+            })
+            .catch((e) => {
+                this.logger.warn("resetKeyBackup: error checking new key backup", e);
+            });
     }
 
     /**

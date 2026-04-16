@@ -205,7 +205,7 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
             this.logger.info(
                 `handleBackupSecretReceived: Valid decryption key for the current server-side backup version (${latestBackupInfo.version}) received`,
             );
-            await this.saveBackupDecryptionKey(backupDecryptionKey, latestBackupInfo.version);
+            await this.saveBackupDecryptionKeyForCurrentBackup(backupDecryptionKey, latestBackupInfo);
             return true;
         } catch (e) {
             this.logger.warn("handleBackupSecretReceived: Unable to validate backup decryption key", e);
@@ -214,14 +214,50 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
         return false;
     }
 
-    public async saveBackupDecryptionKey(
+    private async storeBackupDecryptionKey(
         backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
         version: string,
     ): Promise<void> {
         await this.olmMachine.saveBackupDecryptionKey(backupDecryptionKey, version);
+    }
+
+    public async saveBackupDecryptionKey(
+        backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
+        version: string,
+    ): Promise<void> {
+        await this.storeBackupDecryptionKey(backupDecryptionKey, version);
         // Emit an event that we have a new backup decryption key, so that the sdk can start
         // importing keys from backup if needed.
+        this.emitBackupDecryptionKeyCached(version);
+    }
+
+    /**
+     * Emit that a backup decryption key is cached and ready for listeners to use.
+     *
+     * Callers should only invoke this after the relevant server-side backup is
+     * observable through {@link getServerBackupInfo}.
+     *
+     * @param version - The backup version whose decryption key is cached.
+     */
+    public emitBackupDecryptionKeyCached(version: string): void {
         this.emit(CryptoEvent.KeyBackupDecryptionKeyCached, version);
+    }
+
+    private async saveBackupDecryptionKeyForCurrentBackup(
+        backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
+        backupInfo: KeyBackupInfo,
+    ): Promise<void> {
+        const version = backupInfo.version;
+        if (!version) {
+            throw new Error("Cannot save backup decryption key for backup without version");
+        }
+
+        await this.storeBackupDecryptionKey(backupDecryptionKey, version);
+        this.serverBackupInfo = backupInfo;
+        this.checkedForBackup = true;
+
+        // Emit after the backup is configured so listeners can immediately use the new backup.
+        this.emitBackupDecryptionKeyCached(version);
     }
 
     /**
@@ -568,7 +604,7 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
             },
         );
 
-        await this.saveBackupDecryptionKey(randomKey, res.version);
+        await this.storeBackupDecryptionKey(randomKey, res.version);
 
         return {
             version: res.version,

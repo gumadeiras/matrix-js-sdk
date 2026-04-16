@@ -811,6 +811,21 @@ describe("RustCrypto", () => {
             expect(storeSpy).toHaveBeenCalledWith("m.megolm_backup.v1", expect.anything());
         });
 
+        it("resetKeyBackup emits key cached after the new backup is observable", async () => {
+            const rustCrypto = await makeTestRustCrypto(
+                fetchMock as unknown as MatrixHttpApi<any>,
+                testData.TEST_USER_ID,
+                undefined,
+                secretStorage,
+            );
+
+            const keyBackupIsCached = emitPromise(rustCrypto, CryptoEvent.KeyBackupDecryptionKeyCached);
+
+            await rustCrypto.resetKeyBackup();
+
+            await expect(keyBackupIsCached).resolves.toEqual("1");
+        });
+
         it("bootstrapSecretStorage doesn't try to save megolm backup key not in cache", async () => {
             const mockOlmMachine = {
                 isBackupEnabled: vi.fn().mockResolvedValue(false),
