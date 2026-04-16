@@ -167,6 +167,18 @@ describe("Upload keys to backup", () => {
     });
 
     it("Should emit a received backup key after caching the current backup info", async () => {
+        const keyBackupStatusState = Promise.withResolvers<{
+            enabled: boolean;
+            serverBackupVersion: string | undefined;
+        }>();
+        rustBackupManager.on(CryptoEvent.KeyBackupStatus, async (enabled) => {
+            const serverBackupInfo = await rustBackupManager.getServerBackupInfo();
+            keyBackupStatusState.resolve({
+                enabled,
+                serverBackupVersion: serverBackupInfo?.version,
+            });
+        });
+
         const keyCachedEventState = Promise.withResolvers<{
             activeBackupVersion: string | null;
             eventVersion: string;
@@ -188,11 +200,15 @@ describe("Upload keys to backup", () => {
             true,
         );
 
+        await expect(keyBackupStatusState.promise).resolves.toEqual({
+            enabled: true,
+            serverBackupVersion: "1",
+        });
         await expect(keyCachedEventState.promise).resolves.toEqual({
-            activeBackupVersion: null,
+            activeBackupVersion: "1",
             eventVersion: "1",
             serverBackupVersion: "1",
         });
-        expect(mockOlmMachine.enableBackupV1).not.toHaveBeenCalled();
+        expect(mockOlmMachine.enableBackupV1).toHaveBeenCalledTimes(1);
     });
 });
