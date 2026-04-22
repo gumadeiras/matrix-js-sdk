@@ -205,7 +205,7 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
             this.logger.info(
                 `handleBackupSecretReceived: Valid decryption key for the current server-side backup version (${latestBackupInfo.version}) received`,
             );
-            await this.saveBackupDecryptionKeyForCurrentBackup(backupDecryptionKey, latestBackupInfo);
+            await this.saveBackupDecryptionKey(backupDecryptionKey, latestBackupInfo.version);
             return true;
         } catch (e) {
             this.logger.warn("handleBackupSecretReceived: Unable to validate backup decryption key", e);
@@ -214,86 +214,14 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
         return false;
     }
 
-    private async storeBackupDecryptionKey(
-        backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
-        version: string,
-    ): Promise<void> {
-        await this.olmMachine.saveBackupDecryptionKey(backupDecryptionKey, version);
-    }
-
     public async saveBackupDecryptionKey(
         backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
         version: string,
     ): Promise<void> {
-        await this.storeBackupDecryptionKey(backupDecryptionKey, version);
+        await this.olmMachine.saveBackupDecryptionKey(backupDecryptionKey, version);
         // Emit an event that we have a new backup decryption key, so that the sdk can start
         // importing keys from backup if needed.
-        this.emitBackupDecryptionKeyCached(version);
-    }
-
-    private emitBackupDecryptionKeyCached(version: string): void {
         this.emit(CryptoEvent.KeyBackupDecryptionKeyCached, version);
-    }
-
-    /**
-     * Mark a newly-created backup as the current usable backup.
-     *
-     * The server has already accepted this backup, so this uses the creation
-     * response to update local backup state instead of racing a follow-up GET
-     * against eventual consistency.
-     *
-     * @param backupInfo - The newly-created backup details.
-     */
-    public async enableKeyBackupFromCreation(backupInfo: KeyBackupCreationInfo): Promise<void> {
-        await this.enableKeyBackupFromInfo({
-            algorithm: backupInfo.algorithm,
-            auth_data: backupInfo.authData,
-            version: backupInfo.version,
-        });
-
-        this.emitBackupDecryptionKeyCached(backupInfo.version);
-    }
-
-    private async enableKeyBackupFromInfo(backupInfo: KeyBackupInfo): Promise<void> {
-        const version = backupInfo.version;
-        if (!version) {
-            throw new Error("Cannot enable key backup without version");
-        }
-
-        const previousServerBackupInfo = this.serverBackupInfo;
-        const previousCheckedForBackup = this.checkedForBackup;
-        this.serverBackupInfo = backupInfo;
-        this.checkedForBackup = true;
-
-        try {
-            const activeVersion = await this.getActiveBackupVersion();
-            if (activeVersion === null) {
-                await this.enableKeyBackup(backupInfo);
-            } else if (activeVersion !== version) {
-                await this.disableKeyBackup();
-                await this.enableKeyBackup(backupInfo);
-            }
-        } catch (e) {
-            this.serverBackupInfo = previousServerBackupInfo;
-            this.checkedForBackup = previousCheckedForBackup;
-            throw e;
-        }
-    }
-
-    private async saveBackupDecryptionKeyForCurrentBackup(
-        backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey,
-        backupInfo: KeyBackupInfo,
-    ): Promise<void> {
-        const version = backupInfo.version;
-        if (!version) {
-            throw new Error("Cannot save backup decryption key for backup without version");
-        }
-
-        await this.storeBackupDecryptionKey(backupDecryptionKey, version);
-        await this.enableKeyBackupFromInfo(backupInfo);
-
-        // Emit after the backup is configured so listeners can immediately use the new backup.
-        this.emitBackupDecryptionKeyCached(version);
     }
 
     /**
@@ -640,7 +568,7 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
             },
         );
 
-        await this.storeBackupDecryptionKey(randomKey, res.version);
+        await this.saveBackupDecryptionKey(randomKey, res.version);
 
         return {
             version: res.version,

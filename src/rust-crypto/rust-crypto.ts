@@ -1382,7 +1382,8 @@ export class RustCrypto extends TypedEventEmitter<RustCryptoEvents, CryptoEventH
             await this.secretStorage.store("m.megolm_backup.v1", backupInfo.decryptionKey.toBase64());
         }
 
-        await this.backupManager.enableKeyBackupFromCreation(backupInfo);
+        // we can check and start async
+        this.checkKeyBackupAndEnable();
     }
 
     /**

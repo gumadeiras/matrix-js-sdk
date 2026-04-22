@@ -54,7 +54,6 @@ describe("Upload keys to backup", () => {
             backupRoomKeys: vi.fn(),
             isBackupEnabled: vi.fn().mockResolvedValue(true),
             enableBackupV1: vi.fn(),
-            saveBackupDecryptionKey: vi.fn(),
             verifyBackup: vi.fn().mockResolvedValue({
                 trusted: vi.fn().mockResolvedValue(true),
             } as unknown as RustSdkCryptoJs.SignatureVerification),
@@ -140,75 +139,5 @@ describe("Upload keys to backup", () => {
 
         expect(outgoingRequestProcessor.makeOutgoingRequest).toHaveBeenCalledTimes(1);
         expect(mockOlmMachine.roomKeyCounts).toHaveBeenCalledTimes(0);
-    });
-
-    it("Should not emit key cached while creating a new backup", async () => {
-        fetchMock.hardReset();
-        fetchMock.mockGlobal();
-        fetchMock.get("path:/_matrix/client/v3/room_keys/version", {
-            status: 404,
-            body: {
-                errcode: "M_NOT_FOUND",
-                error: "No backup found",
-            },
-        });
-        fetchMock.post("path:/_matrix/client/v3/room_keys/version", { version: "42" });
-
-        await rustBackupManager.checkKeyBackupAndEnable(false);
-
-        const keyCachedListener = vi.fn();
-        rustBackupManager.on(CryptoEvent.KeyBackupDecryptionKeyCached, keyCachedListener);
-
-        await rustBackupManager.setupKeyBackup(async () => {});
-
-        expect(mockOlmMachine.saveBackupDecryptionKey).toHaveBeenCalledWith(expect.anything(), "42");
-        expect(mockOlmMachine.enableBackupV1).not.toHaveBeenCalled();
-        expect(keyCachedListener).not.toHaveBeenCalled();
-    });
-
-    it("Should emit a received backup key after caching the current backup info", async () => {
-        const keyBackupStatusState = Promise.withResolvers<{
-            enabled: boolean;
-            serverBackupVersion: string | undefined;
-        }>();
-        rustBackupManager.on(CryptoEvent.KeyBackupStatus, async (enabled) => {
-            const serverBackupInfo = await rustBackupManager.getServerBackupInfo();
-            keyBackupStatusState.resolve({
-                enabled,
-                serverBackupVersion: serverBackupInfo?.version,
-            });
-        });
-
-        const keyCachedEventState = Promise.withResolvers<{
-            activeBackupVersion: string | null;
-            eventVersion: string;
-            serverBackupVersion: string | undefined;
-        }>();
-        rustBackupManager.on(CryptoEvent.KeyBackupDecryptionKeyCached, async (eventVersion) => {
-            const [activeBackupVersion, serverBackupInfo] = await Promise.all([
-                rustBackupManager.getActiveBackupVersion(),
-                rustBackupManager.getServerBackupInfo(),
-            ]);
-            keyCachedEventState.resolve({
-                activeBackupVersion,
-                eventVersion,
-                serverBackupVersion: serverBackupInfo?.version,
-            });
-        });
-
-        await expect(rustBackupManager.handleBackupSecretReceived(TestData.BACKUP_DECRYPTION_KEY_BASE64)).resolves.toBe(
-            true,
-        );
-
-        await expect(keyBackupStatusState.promise).resolves.toEqual({
-            enabled: true,
-            serverBackupVersion: "1",
-        });
-        await expect(keyCachedEventState.promise).resolves.toEqual({
-            activeBackupVersion: "1",
-            eventVersion: "1",
-            serverBackupVersion: "1",
-        });
-        expect(mockOlmMachine.enableBackupV1).toHaveBeenCalledTimes(1);
     });
 });
